@@ -1,7 +1,6 @@
 {
-    "name": "Plugin name",
-    "author": "Plugin author",
-    "main_view_html": "main_view.html",
-    "tile_view_html": "",
+    "api_version": 1,
+    "name": "Heroic on Deck",
+    "author": "decky-heroic",
     "flags": ["_hot_reload", "_root"]
 }

@@ -1,14 +1,25 @@
-# Plugin-Template
+# Heroic Decky Bridge Plugin
 
-This is the template plugin for developing plugins for the [SteamOS Plugin Loader](https://github.com/SteamDeckHomebrew/PluginLoader).
+This Decky plugin talks to a local Heroic bridge server that runs inside the Heroic backend process.
 
-## Usage
+## Supported Features
 
-1. Click on the green `Use this template` button to create a new repository for your plugin
-2. Rename the `plugin_template.py` file to something unique
-3. Add your code to the plugin's python and html files.
-4. To use it, simply `git clone` the repo into the `/home/deck/homebrew/plugins` folder on your Steam Deck
+- List Heroic Epic games with box art
+- Show install/download status
+- Show download progress for active downloads
+- Queue install/download for a game
+- Remove a downloaded game
+- Add a game to Steam as a non-Steam shortcut
 
-## License
+## How It Connects
 
-This Template Project is under The Unlicense. You may license your own plugin under whatever license you prefer.
+When Heroic starts, it creates an authenticated localhost bridge and writes connection data to:
+
+- ~/.config/heroic/decky-bridge.json (native installs)
+- ~/.var/app/com.heroicgameslauncher.hgl/config/heroic/decky-bridge.json (Flatpak)
+
+The Decky backend reads this file, then sends authenticated requests to Heroic.
+
+## Deploy
+
+Copy this plugin folder to the Decky plugin directory, then restart Decky or use hot-reload.

@@ -1,11 +1,307 @@
 <html>
     <head>
-        <link rel="stylesheet" href="/steam_resource/css/2.css">
-        <link rel="stylesheet" href="/steam_resource/css/39.css">
-        <link rel="stylesheet" href="/steam_resource/css/library.css">
+        <link rel="stylesheet" href="/steam_resource/css/2.css" />
+        <link rel="stylesheet" href="/steam_resource/css/39.css" />
+        <link rel="stylesheet" href="/steam_resource/css/library.css" />
         <script src="/static/library.js"></script>
+        <style>
+            :root {
+                --bg: #101821;
+                --panel: #172332;
+                --panel-2: #1f3147;
+                --text: #e8eef5;
+                --muted: #95a7ba;
+                --ok: #2fb171;
+                --warn: #eb9a3f;
+                --danger: #de5d5d;
+                --line: #2a3c52;
+            }
+
+            body {
+                margin: 0;
+                padding: 14px;
+                background: radial-gradient(circle at top right, #213248, var(--bg) 60%);
+                color: var(--text);
+                font-family: "Noto Sans", "DejaVu Sans", sans-serif;
+            }
+
+            .header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 10px;
+            }
+
+            .header-actions {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+
+            .title {
+                font-size: 20px;
+                font-weight: 700;
+            }
+
+            .status {
+                color: var(--muted);
+                font-size: 13px;
+            }
+
+            .games {
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }
+
+            .game {
+                background: linear-gradient(145deg, var(--panel), var(--panel-2));
+                border: 1px solid var(--line);
+                border-radius: 12px;
+                padding: 10px;
+                display: grid;
+                grid-template-columns: 68px 1fr;
+                gap: 10px;
+            }
+
+            .cover {
+                width: 68px;
+                height: 90px;
+                border-radius: 8px;
+                object-fit: cover;
+                background: #1a2735;
+                border: 1px solid #314760;
+            }
+
+            .meta h3 {
+                margin: 0;
+                font-size: 15px;
+            }
+
+            .meta .line {
+                margin-top: 4px;
+                color: var(--muted);
+                font-size: 12px;
+            }
+
+            .progress {
+                margin-top: 7px;
+                height: 7px;
+                width: 100%;
+                border-radius: 999px;
+                background: #12202e;
+                overflow: hidden;
+                border: 1px solid #2a3f55;
+            }
+
+            .progress > div {
+                height: 100%;
+                width: 0;
+                background: linear-gradient(90deg, #5bc4ff, #2fb171);
+            }
+
+            .actions {
+                margin-top: 8px;
+                display: flex;
+                gap: 6px;
+                flex-wrap: wrap;
+            }
+
+            button {
+                border: 1px solid #345170;
+                border-radius: 8px;
+                background: #1a2d42;
+                color: var(--text);
+                font-size: 12px;
+                padding: 5px 8px;
+            }
+
+            button[data-variant="danger"] {
+                border-color: #7e3737;
+                background: #4a2424;
+            }
+
+            .empty,
+            .error {
+                margin-top: 10px;
+                padding: 10px;
+                border-radius: 10px;
+                border: 1px solid var(--line);
+                background: var(--panel);
+                color: var(--muted);
+            }
+
+            .error-actions {
+                margin-top: 8px;
+            }
+        </style>
     </head>
     <body>
-        <h2>Hello World</h2>
+        <div class="header">
+            <div class="title">Heroic on Deck</div>
+            <div class="header-actions">
+                <div class="status" id="bridgeStatus">Checking bridge...</div>
+                <button id="startHeroicButton">Start Heroic</button>
+            </div>
+        </div>
+
+        <div class="games" id="games"></div>
+        <div class="empty" id="emptyState" style="display: none">No Epic games found in Heroic.</div>
+        <div class="error" id="errorState" style="display: none"></div>
+
+        <script>
+            const gamesRoot = document.getElementById("games");
+            const bridgeStatus = document.getElementById("bridgeStatus");
+            const emptyState = document.getElementById("emptyState");
+            const errorState = document.getElementById("errorState");
+
+            function escapeHtml(value) {
+                return String(value)
+                    .replaceAll("&", "&amp;")
+                    .replaceAll("<", "&lt;")
+                    .replaceAll(">", "&gt;")
+                    .replaceAll('"', "&quot;")
+                    .replaceAll("'", "&#039;");
+            }
+
+            function pct(progress) {
+                if (!progress || typeof progress.percent !== "number") {
+                    return 0;
+                }
+                return Math.max(0, Math.min(100, progress.percent));
+            }
+
+            function statusText(game) {
+                if (game.status === "installing" || game.status === "updating") {
+                    const percent = pct(game.progress);
+                    return `Downloading ${percent.toFixed(0)}%`;
+                }
+                if (game.status === "queued") {
+                    return "Queued";
+                }
+                if (game.isInstalled) {
+                    return "Installed";
+                }
+                return "Not installed";
+            }
+
+            function cardActions(game) {
+                const encodedApp = encodeURIComponent(game.appName);
+                const installBtn = `<button onclick="window.heroicDecky.install('${encodedApp}')">Install</button>`;
+                const deleteBtn = `<button data-variant="danger" onclick="window.heroicDecky.remove('${encodedApp}')">Delete</button>`;
+                const addSteamBtn = `<button onclick="window.heroicDecky.addToSteam('${encodedApp}')">Add to Steam</button>`;
+
+                if (game.isInstalled) {
+                    return `${addSteamBtn}${deleteBtn}`;
+                }
+                return installBtn;
+            }
+
+            function render(games) {
+                emptyState.style.display = games.length ? "none" : "block";
+                gamesRoot.innerHTML = games
+                    .map((game) => {
+                        const progress = pct(game.progress);
+                        return `
+                            <div class="game">
+                                <img class="cover" src="${escapeHtml(game.boxArt || "")}" alt="cover" />
+                                <div class="meta">
+                                    <h3>${escapeHtml(game.title)}</h3>
+                                    <div class="line">${escapeHtml(statusText(game))}</div>
+                                    <div class="progress"><div style="width: ${progress}%;"></div></div>
+                                    <div class="actions">${cardActions(game)}</div>
+                                </div>
+                            </div>
+                        `;
+                    })
+                    .join("");
+            }
+
+            async function refreshBridgeStatus() {
+                const status = await call_plugin_function("get_bridge_status");
+                if (status.ok) {
+                    bridgeStatus.textContent = `Connected on port ${status.port}`;
+                    errorState.style.display = "none";
+                } else {
+                    bridgeStatus.textContent = "Heroic bridge unavailable";
+                    errorState.style.display = "block";
+                    errorState.innerHTML = `
+                        <div>${escapeHtml(status.message || "Heroic is not available")}</div>
+                        <div class="error-actions"><button onclick="window.heroicDecky.startHeroic()">Start Heroic</button></div>
+                    `;
+                }
+                return status.ok;
+            }
+
+            async function refreshGames({ autoStart = false } = {}) {
+                const status = await call_plugin_function("get_bridge_status", autoStart);
+                if (status.ok) {
+                    bridgeStatus.textContent = `Connected on port ${status.port}`;
+                    errorState.style.display = "none";
+                } else {
+                    bridgeStatus.textContent = "Heroic bridge unavailable";
+                    errorState.style.display = "block";
+                    errorState.innerHTML = `
+                        <div>${escapeHtml(status.message || "Heroic is not available")}</div>
+                        <div class="error-actions"><button onclick="window.heroicDecky.startHeroic()">Start Heroic</button></div>
+                    `;
+                }
+
+                const connected = status.ok;
+                if (!connected) {
+                    gamesRoot.innerHTML = "";
+                    emptyState.style.display = "none";
+                    return;
+                }
+
+                try {
+                    const games = await call_plugin_function("list_games", "legendary");
+                    render(games);
+                } catch (error) {
+                    errorState.style.display = "block";
+                    errorState.textContent = String(error);
+                }
+            }
+
+            window.heroicDecky = {
+                async startHeroic() {
+                    bridgeStatus.textContent = "Starting Heroic...";
+                    const status = await call_plugin_function("start_heroic");
+                    if (!status.ok) {
+                        errorState.style.display = "block";
+                        errorState.innerHTML = `
+                            <div>${escapeHtml(status.message || "Failed to start Heroic")}</div>
+                            <div class="error-actions"><button onclick="window.heroicDecky.startHeroic()">Retry</button></div>
+                        `;
+                        bridgeStatus.textContent = "Heroic bridge unavailable";
+                        return;
+                    }
+
+                    await refreshGames();
+                },
+                async install(encodedApp) {
+                    const appName = decodeURIComponent(encodedApp);
+                    await call_plugin_function("install_game", appName, "legendary");
+                    await refreshGames();
+                },
+                async remove(encodedApp) {
+                    const appName = decodeURIComponent(encodedApp);
+                    await call_plugin_function("delete_game", appName, "legendary");
+                    await refreshGames();
+                },
+                async addToSteam(encodedApp) {
+                    const appName = decodeURIComponent(encodedApp);
+                    await call_plugin_function("add_to_steam", appName, "legendary");
+                    await refreshGames();
+                },
+            };
+
+            document.getElementById("startHeroicButton").addEventListener("click", () => {
+                window.heroicDecky.startHeroic();
+            });
+
+            refreshGames({ autoStart: true });
+            setInterval(() => refreshGames(), 4000);
+        </script>
     </body>
 </html>
