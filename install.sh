@@ -64,7 +64,7 @@ echo "Installing heroic plugin to $DEST"
 rm -rf "$DEST"
 mkdir -p "$DEST"
 
-cp -r "$SRC/plugin.json" "$SRC/main.py" "$DEST/"
+cp -r "$SRC/plugin.json" "$SRC/main.py" "$SRC/heroic_service.py" "$DEST/"
 cp -r "$FRONTEND_DIR/package.json" "$DEST/package.json"
 cp -r "$DIST_DIR" "$DEST/dist"
 [[ -d "$SRC/py_modules" ]] && cp -r "$SRC/py_modules" "$DEST/"

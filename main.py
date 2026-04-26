@@ -9,53 +9,55 @@ from urllib.request import Request, urlopen
 
 class Plugin:
     def __init__(self):
-        self._bridge_info = None
-        self._heroic_process = None
+        self._service_info = None
+        self._service_process = None
 
-    def _bridge_info_paths(self):
-        home = os.path.expanduser("~")
-        return [
-            os.path.join(home, ".config", "heroic", "decky-bridge.json"),
-            os.path.join(
-                home,
-                ".var",
-                "app",
-                "com.heroicgameslauncher.hgl",
-                "config",
-                "heroic",
-                "decky-bridge.json",
-            ),
-            os.path.join(home, ".local", "share", "heroic", "decky-bridge.json"),
-        ]
-
-    def _load_bridge_info(self):
-        if self._bridge_info:
-            return self._bridge_info
-
-        for path in self._bridge_info_paths():
-            if not os.path.exists(path):
-                continue
-
-            with open(path, "r", encoding="utf-8") as file_handle:
-                loaded = json.load(file_handle)
-
-            if "port" in loaded and "token" in loaded:
-                self._bridge_info = loaded
-                return loaded
-
-        raise RuntimeError(
-            "Heroic bridge file was not found. Start Heroic first so the bridge can initialize."
+    def _service_info_path(self):
+        return os.path.join(
+            os.path.expanduser("~"),
+            ".config",
+            "heroic-decky",
+            "service.json",
         )
 
-    def _heroic_request(self, method, path, payload=None, query=None):
-        bridge = self._load_bridge_info()
-        base_url = f"http://127.0.0.1:{bridge['port']}{path}"
+    def _service_unit_path(self):
+        return os.path.join(
+            os.path.expanduser("~"),
+            ".config",
+            "systemd",
+            "user",
+            "heroic-decky.service",
+        )
+
+    def _service_script_path(self):
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), "heroic_service.py")
+
+    def _load_service_info(self):
+        if self._service_info:
+            return self._service_info
+
+        path = self._service_info_path()
+        if not os.path.exists(path):
+            raise RuntimeError("Heroic Decky service info file was not found.")
+
+        with open(path, "r", encoding="utf-8") as file_handle:
+            loaded = json.load(file_handle)
+
+        if "port" not in loaded or "token" not in loaded:
+            raise RuntimeError("Heroic Decky service info is invalid.")
+
+        self._service_info = loaded
+        return loaded
+
+    def _service_request(self, method, path, payload=None, query=None):
+        svc = self._load_service_info()
+        base_url = f"http://127.0.0.1:{svc['port']}{path}"
 
         if query:
             base_url = f"{base_url}?{urlencode(query)}"
 
         body = None
-        headers = {"X-Heroic-Decky-Token": bridge["token"]}
+        headers = {"X-Heroic-Decky-Service-Token": svc["token"]}
         if payload is not None:
             body = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
@@ -68,54 +70,66 @@ class Plugin:
                 return json.loads(raw) if raw else {}
         except HTTPError as error:
             message = error.read().decode("utf-8")
-            raise RuntimeError(message or f"Heroic request failed with HTTP {error.code}")
+            raise RuntimeError(message or f"Service request failed with HTTP {error.code}")
         except URLError as error:
-            self._bridge_info = None
-            raise RuntimeError(f"Unable to reach Heroic bridge: {error}")
+            self._service_info = None
+            raise RuntimeError(f"Unable to reach Heroic Decky service: {error}")
 
-    def _bridge_ready(self):
-        self._bridge_info = None
-        self._heroic_request("GET", "/health")
+    def _write_service_unit(self):
+        unit_path = self._service_unit_path()
+        os.makedirs(os.path.dirname(unit_path), exist_ok=True)
 
-    def _start_heroic_process(self):
-        candidates = [
-            ["flatpak", "run", "com.heroicgameslauncher.hgl", "--no-gui"],
-            ["flatpak", "run", "com.heroicgameslauncher.hgl"],
-            ["heroic", "--no-gui"],
-            ["heroic"],
-            ["com.heroicgameslauncher.hgl", "--no-gui"],
-        ]
+        service_script = self._service_script_path()
+        unit = f"""[Unit]
+Description=Heroic Decky Plugin Service
+After=default.target
 
-        for command in candidates:
-            try:
-                self._heroic_process = subprocess.Popen(
-                    command,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                    close_fds=True,
-                )
-                return {"started": True, "command": " ".join(command)}
-            except FileNotFoundError:
-                continue
-            except Exception:
-                continue
+[Service]
+Type=simple
+ExecStart=/usr/bin/env python3 {service_script}
+Restart=always
+RestartSec=2
 
-        return {
-            "started": False,
-            "message": "Could not launch Heroic. Install Heroic as flatpak or ensure the heroic command is in PATH.",
-        }
+[Install]
+WantedBy=default.target
+"""
 
-    def _wait_for_bridge(self, timeout_seconds=25, interval_seconds=1):
+        with open(unit_path, "w", encoding="utf-8") as file_handle:
+            file_handle.write(unit)
+
+    def _start_service_systemd(self):
+        try:
+            subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
+            subprocess.run(
+                ["systemctl", "--user", "enable", "--now", "heroic-decky.service"],
+                check=True,
+            )
+            return True
+        except Exception:
+            return False
+
+    def _start_service_fallback(self):
+        service_script = self._service_script_path()
+        self._service_process = subprocess.Popen(
+            ["python3", service_script],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+
+    def _wait_for_service(self, timeout_seconds=15, interval_seconds=1):
         end_time = time.monotonic() + timeout_seconds
         last_error = ""
 
         while time.monotonic() < end_time:
             try:
-                self._bridge_ready()
-                bridge = self._load_bridge_info()
-                return {"ok": True, "port": bridge["port"]}
+                self._service_info = None
+                status = self._service_request("GET", "/health")
+                if status.get("ok"):
+                    svc = self._load_service_info()
+                    return {"ok": True, "port": svc["port"]}
             except Exception as error:
                 last_error = str(error)
                 time.sleep(interval_seconds)
@@ -123,37 +137,38 @@ class Plugin:
         return {
             "ok": False,
             "message": last_error
-            or "Heroic started but bridge did not become available in time.",
+            or "Heroic Decky service did not become available in time.",
         }
+
+    def _ensure_service(self):
+        self._write_service_unit()
+
+        started = self._start_service_systemd()
+        if not started:
+            self._start_service_fallback()
+
+        return self._wait_for_service()
 
     async def start_heroic(self):
         try:
-            self._bridge_ready()
-            bridge = self._load_bridge_info()
+            self._service_request("GET", "/health")
+            svc = self._load_service_info()
             return {
                 "ok": True,
                 "started": False,
-                "port": bridge["port"],
-                "message": "Heroic is already running.",
+                "port": svc["port"],
+                "message": "Heroic Decky service is already running.",
             }
         except Exception:
             pass
 
-        start_result = self._start_heroic_process()
-        if not start_result.get("started"):
-            return {
-                "ok": False,
-                "started": False,
-                "message": start_result["message"],
-            }
-
-        waited = self._wait_for_bridge()
+        waited = self._ensure_service()
         if waited["ok"]:
             return {
                 "ok": True,
                 "started": True,
                 "port": waited["port"],
-                "message": f"Started Heroic using: {start_result['command']}",
+                "message": "Heroic Decky service started.",
             }
 
         return {
@@ -164,36 +179,58 @@ class Plugin:
 
     async def get_bridge_status(self, auto_start=False):
         try:
-            self._bridge_ready()
-            bridge = self._load_bridge_info()
+            status = self._service_request("GET", "/bridge_status")
+            if not status.get("ok"):
+                return status
+
+            svc = self._load_service_info()
             return {
                 "ok": True,
-                "port": bridge["port"],
-                "message": "Connected to Heroic bridge",
+                "port": svc["port"],
+                "message": "Connected to Heroic Decky service",
             }
         except Exception as error:
             if auto_start:
-                return await self.start_heroic()
+                result = await self.start_heroic()
+                if result.get("ok"):
+                    return await self.get_bridge_status(auto_start=False)
+                return result
             return {
                 "ok": False,
                 "message": str(error),
             }
 
     async def list_games(self, runner="legendary"):
-        data = self._heroic_request("GET", "/games", query={"runner": runner})
+        data = self._service_request("GET", "/games", query={"runner": runner})
         return data.get("games", [])
 
-    async def install_game(self, app_name, runner="legendary"):
+    async def get_service_paths(self):
+        return self._service_request("GET", "/service_paths")
+
+    async def get_install_path(self):
+        return self._service_request("GET", "/settings/install_path")
+
+    async def set_install_path(self, install_path):
+        return self._service_request(
+            "POST",
+            "/settings/install_path",
+            payload={"installPath": install_path},
+        )
+
+    async def install_game(self, app_name, runner="legendary", install_path=None):
         encoded = quote(app_name, safe="")
-        return self._heroic_request(
+        payload = {"runner": runner}
+        if install_path:
+            payload["installPath"] = install_path
+        return self._service_request(
             "POST",
             f"/games/{encoded}/install",
-            payload={"runner": runner},
+            payload=payload,
         )
 
     async def delete_game(self, app_name, runner="legendary"):
         encoded = quote(app_name, safe="")
-        return self._heroic_request(
+        return self._service_request(
             "DELETE",
             f"/games/{encoded}",
             query={"runner": runner},
@@ -201,11 +238,20 @@ class Plugin:
 
     async def add_to_steam(self, app_name, runner="legendary"):
         encoded = quote(app_name, safe="")
-        return self._heroic_request(
+        return self._service_request(
             "POST",
             f"/games/{encoded}/add-to-steam",
             payload={"runner": runner},
         )
 
+    async def launch_game(self, app_name, runner="legendary"):
+        encoded = quote(app_name, safe="")
+        return self._service_request(
+            "POST",
+            f"/games/{encoded}/launch",
+            payload={"runner": runner},
+        )
+
     async def _main(self):
+        self._ensure_service()
         return
